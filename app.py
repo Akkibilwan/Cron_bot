@@ -7,51 +7,47 @@ from datetime import datetime, timezone, timedelta
 
 import streamlit as st
 
-# 1) Define a logging.Formatter subclass that forces timestamps into GMT+5:30
+# ─── 1) Logging setup ────────────────────────────────────────────────────────
 class TZFormatter(logging.Formatter):
     def __init__(self, fmt=None, datefmt=None, tz=None):
         super().__init__(fmt=fmt, datefmt=datefmt)
-        # if no tz is provided, default to UTC
+        # Default to UTC if no tz is provided
         self.tz = tz or timezone.utc
 
     def formatTime(self, record, datefmt=None):
-        # Convert record.created (a POSIX timestamp) into the desired timezone
+        # Convert the POSIX timestamp to the desired timezone
         dt = datetime.fromtimestamp(record.created, self.tz)
         if datefmt:
             return dt.strftime(datefmt)
-        else:
-            # Fallback to ISO if no datefmt is provided
-            return dt.isoformat()
+        return dt.isoformat()
 
-# 2) Set up the root logger to use our TZFormatter with GMT+5:30
-#    You can also change StreamHandler() to FileHandler("mylog.log") if you
-#    prefer writing to a file instead of stdout.
+# Timezone for GMT+5:30
 tz_india = timezone(timedelta(hours=5, minutes=30))
+
 formatter = TZFormatter(
     fmt="%(asctime)s %(levelname)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S %z",
     tz=tz_india
 )
 
-handler = logging.StreamHandler()
+handler = logging.StreamHandler()  # switch to FileHandler("mylog.log") if you want a file
 handler.setFormatter(formatter)
 
-root_logger = logging.getLogger()    # get the root logger
+root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
-# Remove any existing handlers, then add ours
+# Clear any existing handlers (avoid duplicate logs)
 if root_logger.hasHandlers():
     root_logger.handlers.clear()
 root_logger.addHandler(handler)
 
-# 3) Define the actual "job" function that logs the current timestamp in GMT+5:30
+# ─── 2) Cron‐style job function ───────────────────────────────────────────────
 def log_timestamp_job():
     now = datetime.now(tz_india)
     formatted = now.strftime("%Y-%m-%d %H:%M:%S %z")
     logging.info(f"Current timestamp (GMT+5:30): {formatted}")
 
-# 4) Define a scheduler loop that calls log_timestamp_job() every 60 seconds
 def scheduler_loop():
-    # Optionally, wait until the next full minute to align exactly on :00
+    # Uncomment to align to the top of each minute:
     # now = datetime.now(tz_india)
     # seconds_to_next_minute = 60 - now.second
     # time.sleep(seconds_to_next_minute)
@@ -59,27 +55,26 @@ def scheduler_loop():
         log_timestamp_job()
         time.sleep(60)
 
-# 5) Use Streamlit's @st.experimental_singleton to ensure the scheduler thread
-#    is started exactly once (per process). Even if Streamlit re-runs the script
-#    on each page interaction, this singleton will prevent multiple threads.
-@st.experimental_singleton
-def start_background_scheduler():
-    thread = threading.Thread(target=scheduler_loop, daemon=True)
-    thread.start()
-    return True
+# ─── 3) Ensure only one background thread per process ─────────────────────────
+_scheduler_thread = None
 
-# 6) Main Streamlit app
+def start_background_scheduler():
+    global _scheduler_thread
+    if _scheduler_thread is None:
+        _scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
+        _scheduler_thread.start()
+
+# ─── 4) Streamlit UI ─────────────────────────────────────────────────────────
 def main():
-    # Kick off the scheduler thread as soon as the app loads
+    # Kick off the scheduler thread exactly once
     start_background_scheduler()
 
     st.title("Streamlit Cron‐Style Logger")
     st.write(
         """
-        This Streamlit app logs a timestamp **every minute** (in GMT+5:30) 
-        to the console (or to a file, if you switch to FileHandler).  
-        The background thread runs independently of any front‐end usage, 
-        so timestamps will keep being recorded even if no one is viewing the page.
+        This app logs a timestamp **every minute** (GMT+5:30) to the console (or logfile).  
+        A background thread runs independently of any front‐end usage, so you will see logs 
+        even if no one is viewing the page.
         """
     )
     st.markdown("---")
